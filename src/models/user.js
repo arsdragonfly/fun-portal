@@ -291,7 +291,7 @@ export default () => {
    * For debug purpose only.
    */
   UserSchema.statics.authenticateFakeOAuthAsync = async function(studentId) {
-    if (DI.config.oauthDebug !== false) {
+    if (DI.config.oauthDebug !== true) {
       throw new errors.PermissionError();
     }
     const oauthName = 'fake';
@@ -410,6 +410,7 @@ export default () => {
     uid, sdoc = null) {
     const user = await User.getUserObjectByIdAsync(uid);
     if (sdoc) {
+      user.match.priority = Math.abs(user.match.streak * user.match.change) + 1;
       user.match.initial = true;
       user.submission = sdoc;
     } else {
@@ -427,37 +428,60 @@ export default () => {
     await this.save();
   };
 
-  UserSchema.statics.getHighestPriorityAsync = async function() {
-    return await User.findOne({
+  UserSchema.statics.getHighestPriority = function() {
+    return User.find({
       'match.priority': {$gt: 0},
-    }).sort({'match.priority': -1}).exec();
+    }).sort({'match.priority': -1});
   };
 
-  UserSchema.statics.getBestOpponentAsync = async function(u1, higher) {
-    if (higher) {
-      return await User.findOne({
-        'match.priority': {$gt: 0},
-        '_id': {$ne: u1._id},
-        //'rating.score': {$gte: u1.rating.score},
-      }).sort({'rating.score': 1}).exec();
+  UserSchema.statics.getBestOpponentAsync = async function(u1) {
+    let higher = await User.findOne({
+      'match.priority': {$gt: 0},
+      '_id': {$ne: u1._id},
+      'rating.score': {$gte: u1.rating.score},
+    }).sort({'rating.score': 1}).exec();
+    let lower = await User.findOne({
+      'match.priority': {$gt: 0},
+      '_id': {$ne: u1._id},
+      'rating.score': {$lte: u1.rating.score},
+    }).sort({'rating.score': -1}).exec();
+    const diffHigher = higher
+      ? higher.rating.score - u1.rating.score : Infinity;
+    const diffLower = lower ?
+      u1.rating.score - lower.rating.score : Infinity;
+    if (diffHigher > 100 && diffLower > 100) {
+      return null;
+    } else if (diffHigher > diffLower) {
+      return lower;
     } else {
-      return await User.findOne({
-        'match.priority': {$gt: 0},
-        '_id': {$ne: u1._id},
-        //'rating.score': {$lte: u1.rating.score},
-      }).sort({'rating.score': -1}).exec();
+      return higher;
     }
+
+    // if (higher) {
+    //   return await User.findOne({
+    //     'match.priority': {$gt: 0},
+    //     '_id': {$ne: u1._id},
+    //     //'rating.score': {$gte: u1.rating.score},
+    //   }).sort({'rating.score': 1}).exec();
+    // } else {
+    //   return await User.findOne({
+    //     'match.priority': {$gt: 0},
+    //     '_id': {$ne: u1._id},
+    //     //'rating.score': {$lte: u1.rating.score},
+    //   }).sort({'rating.score': -1}).exec();
+    // }
   };
 
   UserSchema.statics.getExceptionUserAsync = async function() {
     return await User.find({
       'match.priority': {$lte: 0},
-      'submission': {$ne: null},
+      //'submission': {$ne: null},
     }).exec();
   };
 
   UserSchema.methods.resetExceptionAsync = async function() {
-    const sdoc = await DI.models.Submission.getLastSubmissionByUserAsync(this._id);
+    const sdoc = await DI.models.Submission.getLastSubmissionByUserAsync(
+      this._id);
     if (sdoc) {
       this.match.priority = Math.abs(this.match.streak * this.match.change) + 1;
     } else {
